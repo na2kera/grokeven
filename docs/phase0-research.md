@@ -141,3 +141,4 @@ Phase 0 は、Grok Bot アプリの設定画面（Connect apps / ルーチンの
   - エンドポイントのホストは `api2.cursor.sh`（Cursor 基盤）。認証は `Authorization: Bearer <key>`
   - 応答: `HTTP 200` `{"success":true,"runUuid":"..."}`。**run の UUID が返る**ため、`external_run_ref` に保存できる
   - 応答は受付の成功であり、Bot の処理完了ではない（仕様 §3.2 どおり）。オギコの会話への投稿を確認して #2 の合否を判定する
+- **#2 合格**: 送信直後にオギコの会話へ「request_id: g2test-001」「ok」が投稿された。JSON の `text` / `request_id` が正しく Bot に渡っている
