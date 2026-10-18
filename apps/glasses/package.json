@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preview": "vite preview",
-    "pack": "evenhub pack",
+    "pack": "npm run build && evenhub pack app.json dist",
     "simulate": "evenhub-simulator http://localhost:5173"
   },
   "dependencies": {
@@ -21,5 +21,8 @@
     "typescript": "5.9.3",
     "vite": "8.3.4",
     "vitest": "4.1.12"
+  },
+  "volta": {
+    "extends": "../../package.json"
   }
 }

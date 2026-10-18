@@ -1,5 +1,23 @@
 # ローカル起動・検証手順
 
+リポジトリは npm workspaces 構成: `apps/relay`（Cloudflare Workers + D1）と `apps/glasses`（Even Hub G2 アプリ）。ルートで `npm install` すると両方入る。
+
+## apps/glasses（G2 アプリ）
+
+```
+npm run glasses -- dev        # Vite dev server (http://localhost:5173)
+npm run glasses -- simulate   # Even Hub シミュレーター
+npm run glasses -- test       # vitest（レイアウト・状態機械の単体テスト）
+npm run glasses -- build      # tsc + vite build
+npm run glasses -- pack       # .ehpk 作成（evenhub pack）
+```
+
+初回はスマホ側画面（Even アプリ内のページ）で中継 URL と端末トークンを保存する。トークンは `apps/relay/.dev.vars.production` の `DEVICE_TOKEN`。
+
+## apps/relay（中継 API）
+
+以下は `apps/relay` 内で実行する（またはルートから `npm run relay -- <script>`）。
+
 ## 前提
 
 - Node 22（`volta` で `package.json` の `volta.node` が自動適用される）
@@ -21,7 +39,7 @@ npm test           # vitest (workers pool)
 npm run typecheck
 ```
 
-## Phase 0 チェック #2: ルーチン Webhook へ 1 件送る
+### Phase 0 チェック #2: ルーチン Webhook へ 1 件送る
 
 ```
 node scripts/send-to-routine.mjs "今日の東京の天気は？" test-001

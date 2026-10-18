@@ -30,8 +30,9 @@
         "BOT_ADAPTER": "routine-webhook",
         "OWNER_ID": "owner-1",
         "RESULT_TOKEN_TTL_SECONDS": "1800",
-        // Even Hub WebView origin(s), comma-separated. Fill in once known.
-        "ALLOWED_ORIGINS": ""
+        // The Even Hub WebView origin is undocumented (docs/phase0-research.md); "*" is safe because auth is a
+        // bearer token (no cookies). Narrow to the real origin once GET /v1/whoami reports it from the device.
+        "ALLOWED_ORIGINS": "*"
       }
     }
   }

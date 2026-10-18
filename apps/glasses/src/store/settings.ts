@@ -93,8 +93,27 @@ function parsePending(raw: string | null): PendingRequest | null {
   }
 }
 
+/**
+ * Dev convenience for the simulator, where the phone UI cannot be typed into by scripts:
+ * open the app as http://localhost:5173/#settings=<urlencoded JSON> to seed settings once.
+ * The hash is cleared immediately and nothing is bundled; Even Hub never loads the app with a hash.
+ */
+function takeSettingsFromHash(): Partial<Settings> | null {
+  if (!import.meta.env.DEV) return null
+  const m = /[#&]settings=([^&]+)/.exec(location.hash)
+  if (!m) return null
+  history.replaceState(null, '', location.pathname + location.search)
+  try {
+    return parseSettings(decodeURIComponent(m[1]))
+  } catch {
+    return null
+  }
+}
+
 export async function initSettingsStore(evenBridge: EvenAppBridge | null): Promise<void> {
   bridge = evenBridge
+  const seeded = takeSettingsFromHash()
+  if (seeded) await writeKey(KEY_SETTINGS, JSON.stringify({ ...parseSettings(await readKey(KEY_SETTINGS)), ...seeded }))
   const s = parseSettings(await readKey(KEY_SETTINGS))
   settings = {
     baseUrl: (typeof s?.baseUrl === 'string' && s.baseUrl.trim()) || DEFAULT_BASE_URL,
