@@ -149,3 +149,11 @@ Phase 0 は、Grok Bot アプリの設定画面（Connect apps / ルーチンの
 - 本番 `POST /v1/requests`（client_request_id=g2test-002）→ Workers が routine-webhook アダプターで自動送信 → オギコの会話に「request_id: 03e37c1e-...」「ok2」が即時投稿された
 - Bot は JSON 内の `result_url` / `result_token` を認識したが、当時のルーチン指示「外部には投稿しない」に従い未使用。指示更新で利用できる見込み
 - 次: ルーチン指示を更新し、`result_url` へ `Authorization: Bearer <result_token>` 付きで `{request_id, answer}` を POST させる（チェック #3）
+
+## チェック #3 途中経過（同日）: Bot → Workers の POST が Cloudflare 1010 で拒否
+
+- ルーチン更新後、g2test-003（request_id e0930bd7-...）で Bot は回答「ok3」を生成し、送信先の許可チェック（Bot 側で workers.dev のホストに限定）も通過
+- しかし result_url への POST が HTTP 403 / Cloudflare error 1010。1 回再送も同じ
+- 再現: `Python-urllib/3.12` の User-Agent だけ 403。`python-requests`、`curl`、独自 UA は Worker まで届く（401 = トークン検証に到達）
+- 対処: ルーチン側で `User-Agent: grokeven-bot/1.0` を付けて送る。Cloudflare 側の設定変更は不要
+- 副産物: Bot のコンピューターからの外向き HTTPS 送信は**承認なしで実行された**（安全チェックは通過）。チェック #3 の主要論点はこの時点でほぼ成立
