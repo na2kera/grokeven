@@ -157,3 +157,17 @@ Phase 0 は、Grok Bot アプリの設定画面（Connect apps / ルーチンの
 - 再現: `Python-urllib/3.12` の User-Agent だけ 403。`python-requests`、`curl`、独自 UA は Worker まで届く（401 = トークン検証に到達）
 - 対処: ルーチン側で `User-Agent: grokeven-bot/1.0` を付けて送る。Cloudflare 側の設定変更は不要
 - 副産物: Bot のコンピューターからの外向き HTTPS 送信は**承認なしで実行された**（安全チェックは通過）。チェック #3 の主要論点はこの時点でほぼ成立
+
+## チェック #3・#4 合格（同日）
+
+- g2test-004（request_id a4fcafcf-...）: `POST /v1/requests` → ルーチン Webhook → Bot 回答 → Bot が `User-Agent: grokeven-bot/1.0` 付きで `POST /v1/bot-results` → D1 保存 → `GET /v1/requests/{id}` が `completed` / `answer: "ok4"`
+- 所要時間: 依頼作成から completed まで **19 秒**（承認なし）
+- #4: 結果投稿はトークン必須（トークンなし・誤トークン・他依頼のトークン・期限切れはテストで 401 を確認。本番でもトークンなしは 401）
+
+### Phase 0 の成立状況
+
+| 完了条件 | 状態 |
+| --- | --- |
+| 対象が既存マスター Bot（オギコ）であること | 成立（オギコの会話に実行が記録される） |
+| 回答をプログラムで取得できること | 成立 |
+| 追加質問の文脈の扱いを説明できること | #7 で検証中 |
