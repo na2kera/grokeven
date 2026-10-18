@@ -185,6 +185,6 @@ Phase 0 は、Grok Bot アプリの設定画面（Connect apps / ルーチンの
 | --- | --- |
 | 120 秒超の回答（p1-long-001「180 秒待ってから答えて」） | 合格。200 秒で completed、answer=ok-late。トークン TTL 1800 秒内。Bot 側も 1 回目の POST で 200 |
 | 打ち切り後の遅延回答と新規依頼（p1-abandon-001 / p1-after-abandon-001） | 合格。abandon で failed になり枠が解放、直後の新規依頼は 12 秒で completed。打ち切った依頼にも後から answer=ok-abandon が保存された |
-| 重複コールバック（p1-dup-001、Bot に同じ POST を 2 回させた） | Workers 側は completed / answer=ok-dup。2 回目の応答は Bot の報告で確認（期待: 200 + duplicate:true） |
+| 重複コールバック（p1-dup-001、依頼本文で「同じ POST を 2 回送って」と指示） | Bot は 2 回目を送らず、「保存済みの手順では再送は失敗時の 1 回だけ」と報告。**依頼本文でルーチンの送信手順を上書きできない**ことが確認できた（安全面で望ましい）。本番での重複受信は未観測。重複の扱い（同一回答 200 + duplicate:true、異なる回答 409）は単体テストで確認済み |
 
 補助スクリプト: `scripts/ask.sh <client_request_id> "<text>" [max_seconds]`（本番に依頼を作りポーリング）
