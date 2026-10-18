@@ -23,12 +23,16 @@ export async function readJson<T>(req: Request): Promise<T | null> {
   }
 }
 
-/** CORS for the Even Hub WebView. Only origins listed in ALLOWED_ORIGINS are allowed. */
+/**
+ * CORS for the Even Hub WebView. ALLOWED_ORIGINS is a comma-separated list, or "*" to allow any origin.
+ * "*" is acceptable here because auth is a bearer token, never cookies; the WebView origin is undocumented
+ * (see docs/phase0-research.md) and is discovered via GET /v1/whoami.
+ */
 export function corsHeaders(req: Request, allowedOrigins: string | undefined): Record<string, string> {
   const origin = req.headers.get("origin");
   if (!origin || !allowedOrigins) return {};
   const allowed = allowedOrigins.split(",").map((s) => s.trim()).filter(Boolean);
-  if (!allowed.includes(origin)) return {};
+  if (!allowed.includes("*") && !allowed.includes(origin)) return {};
   return {
     "access-control-allow-origin": origin,
     "access-control-allow-methods": "GET, POST, OPTIONS",

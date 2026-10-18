@@ -17,10 +17,21 @@ export default {
     if (request.method === "POST" && path === "/v1/bot-results") return handleBotResult(request, env);
 
     // Client (G2 app / PC) endpoints. Auth: device token. CORS for the WebView origin.
+    const cors = corsHeaders(request, env.ALLOWED_ORIGINS);
+    if (path === "/v1/whoami" || path.startsWith("/v1/requests")) {
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+      const unauthorized = requireDevice(request, env);
+      if (unauthorized) return withHeaders(unauthorized, cors);
+    }
+    // Diagnostic: lets the G2 app discover what Origin / User-Agent the WebView sends (no secrets involved).
+    if (request.method === "GET" && path === "/v1/whoami") {
+      return withHeaders(
+        json({ origin: request.headers.get("origin"), user_agent: request.headers.get("user-agent"), cors_allowed: Boolean(cors["access-control-allow-origin"]) }),
+        cors,
+      );
+    }
     const m = /^\/v1\/requests(?:\/([^/]+))?(?:\/(abandon))?$/.exec(path);
     if (m) {
-      const cors = corsHeaders(request, env.ALLOWED_ORIGINS);
-      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
       const res = await handleClient(request, env, m[1] ? decodeURIComponent(m[1]) : null, m[2] === "abandon");
       return withHeaders(res, cors);
     }
@@ -29,9 +40,13 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-async function handleClient(request: Request, env: Env, id: string | null, isAbandon: boolean): Promise<Response> {
+function requireDevice(request: Request, env: Env): Response | null {
   const token = bearer(request);
   if (!env.DEVICE_TOKEN || !token || !timingSafeEqual(token, env.DEVICE_TOKEN)) return error(401, "unauthorized");
+  return null;
+}
+
+async function handleClient(request: Request, env: Env, id: string | null, isAbandon: boolean): Promise<Response> {
   if (request.method === "POST" && !id) return handleCreateRequest(request, env);
   if (request.method === "GET" && id && !isAbandon) return handleGetRequest(env, id);
   if (request.method === "POST" && id && isAbandon) return handleAbandon(env, id);

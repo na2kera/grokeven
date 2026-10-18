@@ -157,6 +157,14 @@ describe("cors", () => {
     await abandonAll();
   });
 
+  it("whoami reports the caller's origin and requires the device token", async () => {
+    expect((await SELF.fetch("http://x/v1/whoami")).status).toBe(401);
+    const res = await SELF.fetch("http://x/v1/whoami", { headers: { ...DEVICE, origin: "https://allowed.example" } });
+    const body = (await res.json()) as any;
+    expect(body.origin).toBe("https://allowed.example");
+    expect(body.cors_allowed).toBe(true);
+  });
+
   it("adds no CORS headers for an unknown origin", async () => {
     const pre = await SELF.fetch("http://x/v1/requests", { method: "OPTIONS", headers: { origin: "https://evil.example" } });
     expect(pre.headers.get("access-control-allow-origin")).toBeNull();
