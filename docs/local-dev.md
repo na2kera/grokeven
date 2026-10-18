@@ -53,3 +53,13 @@ node scripts/send-to-routine.mjs "今日の東京の天気は？" test-001
 | POST /v1/requests | Bearer DEVICE_TOKEN | 依頼作成。202 + request_id。同じ client_request_id は既存を 200 で返す。未完了が 1 件あれば 409 |
 | GET /v1/requests/{id} | Bearer DEVICE_TOKEN | 状態・回答取得 |
 | POST /v1/bot-results | Bearer 依頼ごとの result_token | Bot からの回答投稿 `{request_id, answer}`。同一回答の再送は 200、異なる回答は 409 |
+
+## Even Hub への導入（実機）
+
+1. `npm run glasses -- pack` → `apps/glasses/grokeven.ehpk` ができる（git 管理外）
+2. Even アプリの開発者メニュー（Private Testing）から `.ehpk` を読み込む。または開発中は `npm run glasses -- dev` を起動し、`npx evenhub qr` で表示される QR をスマホの Even アプリで読み取ってサイドロードする
+3. スマホ側画面で中継 URL（既定値のまま）と端末トークン（`apps/relay/.dev.vars.production` の `DEVICE_TOKEN`）を保存し、「接続テスト」で `origin=...` を確認する
+   - ここで出た Origin を `apps/relay/wrangler.jsonc` の `ALLOWED_ORIGINS`（現在 `*`）に絞り込む
+4. グラス側: タップで固定文を送信 → 待機 → 回答。スワイプでページ、タップで新しい質問、2 回タップで終了・中断
+
+注意: `app.json` の `name`（現在 "Bot Relay"）は未決定。Even Hub の審査規則で "Even" を含めてはならない（docs/phase0-research.md 参照）。

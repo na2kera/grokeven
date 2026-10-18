@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preview": "vite preview",
-    "pack": "npm run build && evenhub pack app.json dist",
+    "pack": "npm run build && evenhub pack \"$PWD/app.json\" \"$PWD/dist\" -o grokeven.ehpk --sdk-ver 0.0.16",
     "simulate": "evenhub-simulator http://localhost:5173"
   },
   "dependencies": {
