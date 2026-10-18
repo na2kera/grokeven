@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Phase 0 check #2: send one request to the Grok Bot routine webhook by hand.
-// Reads ROUTINE_WEBHOOK_URL / ROUTINE_WEBHOOK_SECRET from .dev.vars (git-ignored). Never prints the secret.
+// Reads ROUTINE_WEBHOOK_URL / ROUTINE_WEBHOOK_SECRET / ROUTINE_WEBHOOK_AUTH_HEADER from .dev.vars (git-ignored).
+// Never prints the secret or the full URL.
 // Usage: node scripts/send-to-routine.mjs "<question>" [request_id]
-// AUTH_MODE=standard (default, Standard Webhooks HMAC) | bearer | header | none
+//   AUTH_MODE=header (default: header named by ROUTINE_WEBHOOK_AUTH_HEADER, "Authorization" => Bearer)
+//   AUTH_MODE=standard (Standard Webhooks HMAC signature) | none
 import { readFileSync } from "node:fs";
 import { createHmac, randomUUID } from "node:crypto";
 
@@ -18,8 +20,9 @@ if (!url) throw new Error("ROUTINE_WEBHOOK_URL missing in .dev.vars");
 
 const text = process.argv[2] ?? "テストです。「ok」とだけ答えてください。";
 const requestId = process.argv[3] ?? `test-${Date.now()}`;
-const mode = process.env.AUTH_MODE ?? "standard";
-const body = JSON.stringify({ text, request_id: requestId });
+const mode = process.env.AUTH_MODE ?? "header";
+const extra = process.env.EXTRA_JSON ? JSON.parse(process.env.EXTRA_JSON) : {};
+const body = JSON.stringify({ text, request_id: requestId, ...extra });
 
 const headers = { "content-type": "application/json" };
 if (mode === "standard") {
@@ -28,14 +31,13 @@ if (mode === "standard") {
   const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
   const sig = createHmac("sha256", key).update(`${id}.${ts}.${body}`).digest("base64");
   Object.assign(headers, { "webhook-id": id, "webhook-timestamp": ts, "webhook-signature": `v1,${sig}` });
-} else if (mode === "bearer") {
-  headers.authorization = `Bearer ${secret}`;
 } else if (mode === "header") {
-  headers[process.env.AUTH_HEADER ?? "x-webhook-secret"] = secret;
+  const name = (vars.ROUTINE_WEBHOOK_AUTH_HEADER || "Authorization").trim();
+  const value = name.toLowerCase() === "authorization" && !/^bearer\s/i.test(secret) ? `Bearer ${secret}` : secret;
+  headers[name] = value;
 }
 
 console.log(`POST ${new URL(url).origin}/… auth=${mode} request_id=${requestId}`);
 const res = await fetch(url, { method: "POST", headers, body });
 console.log(`HTTP ${res.status} ${res.statusText}`);
-const out = await res.text();
-console.log(out.slice(0, 500));
+console.log((await res.text()).slice(0, 500));

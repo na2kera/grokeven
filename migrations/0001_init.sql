@@ -18,3 +18,6 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 CREATE INDEX IF NOT EXISTS idx_requests_owner_status ON requests (owner_id, status);
 CREATE INDEX IF NOT EXISTS idx_requests_token_hash ON requests (result_token_hash);
+-- MVP: at most one in-flight request per owner, enforced by the database.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_requests_one_active ON requests (owner_id)
+  WHERE status IN ('accepted', 'processing', 'awaiting_approval', 'delivery_unknown');

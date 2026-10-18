@@ -22,3 +22,25 @@ export async function readJson<T>(req: Request): Promise<T | null> {
     return null;
   }
 }
+
+/** CORS for the Even Hub WebView. Only origins listed in ALLOWED_ORIGINS are allowed. */
+export function corsHeaders(req: Request, allowedOrigins: string | undefined): Record<string, string> {
+  const origin = req.headers.get("origin");
+  if (!origin || !allowedOrigins) return {};
+  const allowed = allowedOrigins.split(",").map((s) => s.trim()).filter(Boolean);
+  if (!allowed.includes(origin)) return {};
+  return {
+    "access-control-allow-origin": origin,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "authorization, content-type",
+    "access-control-max-age": "600",
+    vary: "origin",
+  };
+}
+
+export function withHeaders(res: Response, headers: Record<string, string>): Response {
+  if (Object.keys(headers).length === 0) return res;
+  const out = new Response(res.body, res);
+  for (const [k, v] of Object.entries(headers)) out.headers.set(k, v);
+  return out;
+}

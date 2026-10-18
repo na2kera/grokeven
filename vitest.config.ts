@@ -13,6 +13,7 @@ export default defineConfig(async () => {
             DEVICE_TOKEN: "test-device-token",
             RESULT_URL: "http://example/v1/bot-results",
             BOT_ADAPTER: "manual",
+            ALLOWED_ORIGINS: "https://allowed.example",
             TEST_MIGRATIONS: migrations,
           },
         },

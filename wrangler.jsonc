@@ -13,16 +13,32 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Local / verification defaults. "manual" returns the per-request result token to the caller so the
+  // operator can hand it to the Bot. It must never be used on a deployed Worker.
   "vars": {
-    // "manual": do not call the Bot; verification scripts send the request by hand.
-    // "routine-webhook": POST to ROUTINE_WEBHOOK_URL (secret) when a request is created.
     "BOT_ADAPTER": "manual",
     "OWNER_ID": "owner-1",
-    "RESULT_TOKEN_TTL_SECONDS": "1800"
+    "RESULT_TOKEN_TTL_SECONDS": "1800",
+    "ALLOWED_ORIGINS": ""
+  },
+  "env": {
+    "production": {
+      "d1_databases": [
+        { "binding": "DB", "database_name": "grokeven", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+      ],
+      "vars": {
+        "BOT_ADAPTER": "routine-webhook",
+        "OWNER_ID": "owner-1",
+        "RESULT_TOKEN_TTL_SECONDS": "1800",
+        // Even Hub WebView origin(s), comma-separated. Fill in once known.
+        "ALLOWED_ORIGINS": ""
+      }
+    }
   }
-  // Secrets (set with `wrangler secret put` or in .dev.vars):
-  //   DEVICE_TOKEN          client auth for /v1/requests endpoints
-  //   RESULT_URL            public URL the Bot posts results to, e.g. https://grokeven.<acct>.workers.dev/v1/bot-results
-  //   ROUTINE_WEBHOOK_URL   Grok Bot routine webhook endpoint (only with BOT_ADAPTER=routine-webhook)
-  //   ROUTINE_WEBHOOK_SECRET optional, depends on the verified auth scheme
+  // Secrets (set with `wrangler secret put --env production` or in .dev.vars):
+  //   DEVICE_TOKEN                 client auth for /v1/requests endpoints
+  //   RESULT_URL                   public URL the Bot posts results to, e.g. https://grokeven.<acct>.workers.dev/v1/bot-results
+  //   ROUTINE_WEBHOOK_URL          Grok Bot routine webhook endpoint (BOT_ADAPTER=routine-webhook)
+  //   ROUTINE_WEBHOOK_SECRET       key issued with the routine webhook
+  //   ROUTINE_WEBHOOK_AUTH_HEADER  header carrying the key ("Authorization" => Bearer). Default: Authorization
 }

@@ -6,11 +6,11 @@
   "description": "Even G2 x Grok Bot relay API (Cloudflare Workers + D1)",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --env production",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply grokeven --local",
-    "db:migrate:remote": "wrangler d1 migrations apply grokeven --remote",
+    "db:migrate:remote": "wrangler d1 migrations apply grokeven --remote --env production",
     "cf-typegen": "wrangler types"
   },
   "devDependencies": {

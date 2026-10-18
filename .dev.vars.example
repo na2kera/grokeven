@@ -4,3 +4,5 @@ RESULT_URL=http://localhost:8787/v1/bot-results
 # Only when BOT_ADAPTER=routine-webhook
 ROUTINE_WEBHOOK_URL=
 ROUTINE_WEBHOOK_SECRET=
+# Header carrying the key. "Authorization" => "Bearer <key>". Default: Authorization
+ROUTINE_WEBHOOK_AUTH_HEADER=
