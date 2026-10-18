@@ -142,3 +142,10 @@ Phase 0 は、Grok Bot アプリの設定画面（Connect apps / ルーチンの
   - 応答: `HTTP 200` `{"success":true,"runUuid":"..."}`。**run の UUID が返る**ため、`external_run_ref` に保存できる
   - 応答は受付の成功であり、Bot の処理完了ではない（仕様 §3.2 どおり）。オギコの会話への投稿を確認して #2 の合否を判定する
 - **#2 合格**: 送信直後にオギコの会話へ「request_id: g2test-001」「ok」が投稿された。JSON の `text` / `request_id` が正しく Bot に渡っている
+
+## 本番デプロイと自動送信（同日）
+
+- Workers `grokeven-production` を本番デプロイ（URL: https://grokeven-production.na2kera.workers.dev）。D1 `grokeven` 作成・マイグレーション適用・シークレット登録済み
+- 本番 `POST /v1/requests`（client_request_id=g2test-002）→ Workers が routine-webhook アダプターで自動送信 → オギコの会話に「request_id: 03e37c1e-...」「ok2」が即時投稿された
+- Bot は JSON 内の `result_url` / `result_token` を認識したが、当時のルーチン指示「外部には投稿しない」に従い未使用。指示更新で利用できる見込み
+- 次: ルーチン指示を更新し、`result_url` へ `Authorization: Bearer <result_token>` 付きで `{request_id, answer}` を POST させる（チェック #3）
