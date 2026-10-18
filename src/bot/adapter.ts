@@ -89,7 +89,7 @@ class RoutineWebhookAdapter implements BotAdapter {
 export function webhookAuthHeaders(env: Pick<Env, "ROUTINE_WEBHOOK_SECRET" | "ROUTINE_WEBHOOK_AUTH_HEADER">): Record<string, string> {
   const secret = env.ROUTINE_WEBHOOK_SECRET;
   if (!secret) return {};
-  const name = (env.ROUTINE_WEBHOOK_AUTH_HEADER || "Authorization").trim();
+  const name = (env.ROUTINE_WEBHOOK_AUTH_HEADER || "Authorization").split(":")[0].trim();
   const value = name.toLowerCase() === "authorization" && !/^bearer\s/i.test(secret) ? `Bearer ${secret}` : secret;
   return { [name]: value };
 }

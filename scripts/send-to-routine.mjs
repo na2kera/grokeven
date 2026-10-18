@@ -32,7 +32,7 @@ if (mode === "standard") {
   const sig = createHmac("sha256", key).update(`${id}.${ts}.${body}`).digest("base64");
   Object.assign(headers, { "webhook-id": id, "webhook-timestamp": ts, "webhook-signature": `v1,${sig}` });
 } else if (mode === "header") {
-  const name = (vars.ROUTINE_WEBHOOK_AUTH_HEADER || "Authorization").trim();
+  const name = (vars.ROUTINE_WEBHOOK_AUTH_HEADER || "Authorization").split(":")[0].trim();
   const value = name.toLowerCase() === "authorization" && !/^bearer\s/i.test(secret) ? `Bearer ${secret}` : secret;
   headers[name] = value;
 }
