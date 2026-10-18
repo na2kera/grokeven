@@ -1,0 +1,6 @@
+# Copy to .dev.vars (git-ignored). Never commit real values.
+DEVICE_TOKEN=change-me-device-token
+RESULT_URL=http://localhost:8787/v1/bot-results
+# Only when BOT_ADAPTER=routine-webhook
+ROUTINE_WEBHOOK_URL=
+ROUTINE_WEBHOOK_SECRET=

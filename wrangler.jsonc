@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "grokeven",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "grokeven",
+      // Replace with the real database_id after `wrangler d1 create grokeven`.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // "manual": do not call the Bot; verification scripts send the request by hand.
+    // "routine-webhook": POST to ROUTINE_WEBHOOK_URL (secret) when a request is created.
+    "BOT_ADAPTER": "manual",
+    "OWNER_ID": "owner-1",
+    "RESULT_TOKEN_TTL_SECONDS": "1800"
+  }
+  // Secrets (set with `wrangler secret put` or in .dev.vars):
+  //   DEVICE_TOKEN          client auth for /v1/requests endpoints
+  //   RESULT_URL            public URL the Bot posts results to, e.g. https://grokeven.<acct>.workers.dev/v1/bot-results
+  //   ROUTINE_WEBHOOK_URL   Grok Bot routine webhook endpoint (only with BOT_ADAPTER=routine-webhook)
+  //   ROUTINE_WEBHOOK_SECRET optional, depends on the verified auth scheme
+}

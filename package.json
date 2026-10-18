@@ -1,0 +1,26 @@
+{
+  "name": "grokeven",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Even G2 x Grok Bot relay API (Cloudflare Workers + D1)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply grokeven --local",
+    "db:migrate:remote": "wrangler d1 migrations apply grokeven --remote",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.4",
+    "@cloudflare/workers-types": "5.20261018.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12",
+    "wrangler": "4.151.1"
+  },
+  "volta": {
+    "node": "22.13.1"
+  }
+}
