@@ -30,6 +30,7 @@ import {
 let bridge: EvenAppBridge | null = null
 let screen: Screen = { kind: 'idle' }
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+let pollInFlight = false
 let generation = 0
 let busy = false
 let disposed = false
@@ -172,7 +173,7 @@ export async function sendQuestion(): Promise<void> {
       req = await createRequest({ conversationId: pending.conversationId, clientRequestId: pending.clientRequestId, text: pending.text })
     } catch (e) {
       if (stale(gen)) return
-      await handleRelayError(e, null)
+      await handleRelayError(e, null, gen)
       return
     }
     if (stale(gen)) return
@@ -190,9 +191,13 @@ function stale(gen: number): boolean {
 
 async function applyRequest(req: RelayRequest, startedAt: number, gen: number): Promise<void> {
   if (stale(gen)) return
+  if (screen.kind !== 'waiting' && screen.kind !== 'sending') return
   const done = screenForRequest(req, pagesOf)
   if (done) {
-    // Keep the pending entry so reopening restores the answer; it is cleared when the user moves on.
+    // Answer: keep the pending entry so reopening restores it (cleared when the user moves on).
+    // Definite failure: nothing left to resume, so forget it and let "戻る" go to idle.
+    if (done.kind === 'error') await setPending(null)
+    if (stale(gen)) return
     setScreen(done)
     return
   }
@@ -215,8 +220,9 @@ function cancelPoll(): void {
 }
 
 async function poll(gen: number): Promise<void> {
-  if (stale(gen) || screen.kind !== 'waiting') return
+  if (stale(gen) || screen.kind !== 'waiting' || pollInFlight) return
   const { requestId, startedAt } = screen
+  pollInFlight = true
   try {
     const req = await getRequest(requestId)
     await applyRequest(req, startedAt, gen)
@@ -230,13 +236,16 @@ async function poll(gen: number): Promise<void> {
       if (!timedOut) schedulePoll(pollInterval(elapsed))
       return
     }
-    await handleRelayError(e, requestId)
+    await handleRelayError(e, requestId, gen)
+  } finally {
+    pollInFlight = false
   }
 }
 
 /** Errors keep the pending entry (except not_found): the relay may still finish it, and 409 would block otherwise. */
-async function handleRelayError(e: unknown, requestId: string | null): Promise<void> {
+async function handleRelayError(e: unknown, requestId: string | null, gen: number): Promise<void> {
   cancelPoll()
+  if (stale(gen)) return
   if (e instanceof RelayError) {
     switch (e.code) {
       case 'unauthorized':
@@ -245,10 +254,12 @@ async function handleRelayError(e: unknown, requestId: string | null): Promise<v
       case 'in_flight':
         // The relay still has an unfinished request we do not know about (e.g. storage was lost). Nothing to resume.
         await setPending(null)
+        if (stale(gen)) return
         setScreen({ kind: 'error', message: '前の依頼がまだ処理中です\nしばらく待ってから再試行してください', requestId, retryable: true })
         return
       case 'not_found':
         await setPending(null)
+        if (stale(gen)) return
         setScreen({ kind: 'error', message: '依頼が見つかりません', requestId: null, retryable: false })
         return
       case 'network':
@@ -326,6 +337,7 @@ export function handleInput(eventType: OsEventTypeList): void {
       else if (input === 'click' && screen.timedOut) schedulePoll(0) // 状況を再確認
       break
     case 'answer':
+      if (busy) break
       if (input === 'click') {
         // New question: this is the point where the answered request is forgotten.
         generation++
@@ -335,6 +347,7 @@ export function handleInput(eventType: OsEventTypeList): void {
       else setScreen(turnPage(screen, input))
       break
     case 'error':
+      if (busy) break
       if (input === 'double') {
         // Back: resume a known request rather than dropping it.
         if (screen.requestId && getPending()?.requestId === screen.requestId) resume(screen.requestId)
@@ -360,15 +373,3 @@ export function dispose(): void {
   cancelPoll()
 }
 
-/** Test hook: reset module state between tests. */
-export function __resetForTests(): void {
-  cancelPoll()
-  bridge = null
-  screen = { kind: 'idle' }
-  generation = 0
-  busy = false
-  disposed = false
-  listeners.clear()
-  renderInFlight = false
-  renderDirty = false
-}

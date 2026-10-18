@@ -26,7 +26,8 @@ export interface PendingRequest {
 
 interface Stamped<T> {
   savedAt: number
-  value: T
+  /** null = deleted (a tombstone, so a delete also competes by timestamp). */
+  value: T | null
 }
 
 export const DEFAULT_BASE_URL = 'https://grokeven-production.na2kera.workers.dev'
@@ -57,8 +58,7 @@ function parseStamped<T>(raw: string | null | undefined, validate: (v: unknown) 
   try {
     const p = JSON.parse(raw)
     if (typeof p?.savedAt !== 'number') return null
-    const value = validate(p.value)
-    return value === null ? null : { savedAt: p.savedAt, value }
+    return { savedAt: p.savedAt, value: p.value === null ? null : validate(p.value) }
   } catch {
     return null
   }
@@ -83,15 +83,15 @@ async function readNewest<T>(key: string, validate: (v: unknown) => T | null): P
   } catch {
     // WebView storage unavailable
   }
-  if (fromHost && fromWeb) return fromHost.savedAt >= fromWeb.savedAt ? fromHost.value : fromWeb.value
+  // Ties go to the WebView copy: it is always written first and never fails silently.
+  if (fromHost && fromWeb) return fromHost.savedAt > fromWeb.savedAt ? fromHost.value : fromWeb.value
   return (fromHost ?? fromWeb)?.value ?? null
 }
 
 async function writeBoth<T>(key: string, value: T | null): Promise<void> {
-  const raw = value === null ? '' : JSON.stringify({ savedAt: Date.now(), value } satisfies Stamped<T>)
+  const raw = JSON.stringify({ savedAt: Date.now(), value } satisfies Stamped<T>)
   try {
-    if (raw) localStorage.setItem(key, raw)
-    else localStorage.removeItem(key)
+    localStorage.setItem(key, raw)
   } catch {
     // ignore
   }

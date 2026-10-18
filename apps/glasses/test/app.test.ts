@@ -33,8 +33,23 @@ const mem = new Map<string, string>()
   clear: () => mem.clear(),
 }
 
-import { __resetForTests, dispose, getScreen, handleInput, initGlasses } from '../src/glasses/app.ts'
-import { getPending, initSettingsStore, saveSettings, setPending } from '../src/store/settings.ts'
+type App = typeof import('../src/glasses/app.ts')
+type Store = typeof import('../src/store/settings.ts')
+let app: App
+let store: Store
+async function loadModules() {
+  vi.resetModules()
+  app = await import('../src/glasses/app.ts')
+  store = await import('../src/store/settings.ts')
+}
+const dispose = () => app.dispose()
+const getScreen = () => app.getScreen()
+const handleInput = (e: number) => app.handleInput(e as any)
+const initGlasses = (b: unknown) => app.initGlasses(b as any)
+const getPending = () => store.getPending()
+const initSettingsStore = (b: unknown) => store.initSettingsStore(b as any)
+const saveSettings = (s: Parameters<Store['saveSettings']>[0]) => store.saveSettings(s)
+const setPending = (p: Parameters<Store['setPending']>[0]) => store.setPending(p)
 
 const bridge = {
   createStartUpPageContainer: sdk.create,
@@ -58,9 +73,9 @@ async function boot() {
   await initGlasses(bridge)
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
-  __resetForTests()
+  await loadModules()
   relay.createRequest.mockReset()
   relay.getRequest.mockReset()
   relay.abandonRequest.mockReset()
@@ -122,7 +137,9 @@ describe('glasses app', () => {
     await boot()
     await setPending({ clientRequestId: 'k', requestId: 'r9', conversationId: 'c', text: 'q', startedAt: Date.now() - 30_000 })
     relay.getRequest.mockResolvedValue(req({ request_id: 'r9', status: 'completed', answer: 'late' }))
-    __resetForTests()
+    // simulate app restart: fresh module state, same storage
+    await loadModules()
+    await initSettingsStore(bridge)
     await initGlasses(bridge)
     await flush()
     expect(relay.createRequest).not.toHaveBeenCalled()
@@ -175,6 +192,52 @@ describe('glasses app', () => {
     resolvePoll(req({ status: 'completed', answer: 'stale' }))
     await flush()
     expect(getScreen().kind).toBe('idle')
+  })
+
+  it('a definite failure clears pending and "戻る" goes to idle', async () => {
+    await boot()
+    relay.createRequest.mockResolvedValue(req({ status: 'failed', error: 'dispatch_failed' }))
+    handleInput(CLICK)
+    await flush()
+    expect(getScreen()).toMatchObject({ kind: 'error', retryable: false })
+    expect(getPending()).toBeNull()
+    handleInput(DOUBLE)
+    await flush()
+    expect(getScreen().kind).toBe('idle')
+  })
+
+  it('foreground re-entry while a poll is in flight does not start a second GET or regress the screen', async () => {
+    await boot()
+    relay.createRequest.mockResolvedValue(req())
+    let resolveFirst!: (r: RelayRequest) => void
+    relay.getRequest
+      .mockReturnValueOnce(new Promise<RelayRequest>(r => { resolveFirst = r }))
+      .mockResolvedValue(req({ status: 'processing' }))
+    handleInput(CLICK)
+    await flush()
+    await vi.advanceTimersByTimeAsync(2100) // first GET in flight
+    app.refresh()
+    app.refresh()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(relay.getRequest).toHaveBeenCalledTimes(1)
+    resolveFirst(req({ status: 'completed', answer: 'done' }))
+    await flush()
+    expect(getScreen().kind).toBe('answer')
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(getScreen().kind).toBe('answer') // no stale "processing" regression
+  })
+
+  it('a host-storage delete that fails cannot resurrect the pending request on restart', async () => {
+    await boot()
+    const hostStore = new Map<string, string>()
+    const flaky = { ...bridge, getLocalStorage: async (k: string) => hostStore.get(k) ?? '', setLocalStorage: async (k: string, v: string) => { if (v.includes('"value":null')) throw new Error('host down'); hostStore.set(k, v); return true } }
+    await initSettingsStore(flaky)
+    await setPending({ clientRequestId: 'k', requestId: 'r1', conversationId: 'c', text: 'q', startedAt: Date.now() })
+    await vi.advanceTimersByTimeAsync(5)
+    await setPending(null) // host write fails, WebView tombstone is newer
+    await loadModules()
+    await initSettingsStore(flaky)
+    expect(getPending()).toBeNull()
   })
 
   it('dispose stops continuations: a late create response does not render or schedule polls', async () => {
