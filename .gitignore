@@ -6,3 +6,4 @@ dist/
 .env.*
 *.ehpk
 .DS_Store
+.dev.vars.*

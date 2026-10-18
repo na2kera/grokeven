@@ -9,7 +9,7 @@
       "binding": "DB",
       "database_name": "grokeven",
       // Replace with the real database_id after `wrangler d1 create grokeven`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "2f82aa5d-64f5-4700-824d-d7ec0e7c34e4",
       "migrations_dir": "migrations"
     }
   ],
@@ -24,7 +24,7 @@
   "env": {
     "production": {
       "d1_databases": [
-        { "binding": "DB", "database_name": "grokeven", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "grokeven", "database_id": "2f82aa5d-64f5-4700-824d-d7ec0e7c34e4", "migrations_dir": "migrations" }
       ],
       "vars": {
         "BOT_ADAPTER": "routine-webhook",
