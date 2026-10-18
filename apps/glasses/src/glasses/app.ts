@@ -5,13 +5,14 @@ import {
   OsEventTypeList,
 } from '@evenrealities/even_hub_sdk'
 import { abandonRequest, createRequest, getRequest, RelayError, type RelayRequest } from '../api/relay.ts'
-import { getPending, getSettings, isConfigured, setPending } from '../store/settings.ts'
+import { getPending, getSettings, isConfigured, setPending, type PendingRequest } from '../store/settings.ts'
 import { buildScreen, centeredMessage, CONTAINER_TOTAL, paginate, wrapText } from './layout.ts'
 import {
   type Input,
   type Screen,
   footerFor,
   headerFor,
+  idlePreview,
   pollInterval,
   screenForRequest,
   turnPage,
@@ -19,11 +20,19 @@ import {
   WAIT_LIMIT_MS,
 } from './state.ts'
 
+/**
+ * Glasses controller. Concurrency model:
+ * - `generation` increments whenever the user starts or ends a request; every async continuation
+ *   (relay responses, poll timers) checks it and drops stale results.
+ * - `busy` serializes user-initiated relay calls (send, abandon) so a second tap cannot double-post.
+ * - `disposed` stops every continuation after exit.
+ */
 let bridge: EvenAppBridge | null = null
-let screen: Screen = { kind: 'idle', lastAnswer: null }
+let screen: Screen = { kind: 'idle' }
 let pollTimer: ReturnType<typeof setTimeout> | null = null
-let pollToken = 0
-/** Listeners for the phone UI (status mirror). */
+let generation = 0
+let busy = false
+let disposed = false
 const listeners = new Set<(s: Screen) => void>()
 
 export function onScreenChange(fn: (s: Screen) => void): () => void {
@@ -37,6 +46,7 @@ export function getScreen(): Screen {
 }
 
 function setScreen(next: Screen): void {
+  if (disposed) return
   screen = next
   for (const fn of listeners) fn(screen)
   render()
@@ -46,6 +56,7 @@ const pagesOf = (text: string) => paginate(wrapText(text))
 
 export async function initGlasses(evenBridge: EvenAppBridge): Promise<void> {
   bridge = evenBridge
+  disposed = false
   screen = initialScreen()
   const payload = buildScreen(headerFor(screen), bodyLines(), footerFor(screen))
   await bridge.createStartUpPageContainer(
@@ -54,6 +65,8 @@ export async function initGlasses(evenBridge: EvenAppBridge): Promise<void> {
   for (const fn of listeners) fn(screen)
   // Reopened with a request still pending: re-fetch instead of re-sending (spec 5.3).
   if (screen.kind === 'waiting') schedulePoll(0)
+  // Pending without a request_id: the create call never returned. Retry idempotently with the same key.
+  else if (screen.kind === 'idle' && getPending() && !getPending()!.requestId) void sendQuestion()
 }
 
 function initialScreen(): Screen {
@@ -62,14 +75,27 @@ function initialScreen(): Screen {
   if (pending?.requestId) {
     return { kind: 'waiting', requestId: pending.requestId, startedAt: pending.startedAt, status: 'accepted', timedOut: false }
   }
-  return { kind: 'idle', lastAnswer: null }
+  return { kind: 'idle' }
 }
 
 /** Called on FOREGROUND_ENTER and after phone-side settings changes. */
 export function refresh(): void {
-  if (screen.kind === 'unconfigured' && isConfigured()) setScreen({ kind: 'idle', lastAnswer: null })
-  else if (screen.kind === 'idle' && !isConfigured()) setScreen({ kind: 'unconfigured' })
-  else if (screen.kind === 'waiting') schedulePoll(0)
+  if (disposed) return
+  if (!isConfigured()) {
+    if (screen.kind !== 'unconfigured') {
+      cancelPoll()
+      setScreen({ kind: 'unconfigured' })
+    }
+    return
+  }
+  const pending = getPending()
+  if (screen.kind === 'unconfigured') {
+    // Token was just saved. Resume a pending request if there is one.
+    if (pending?.requestId) {
+      setScreen({ kind: 'waiting', requestId: pending.requestId, startedAt: pending.startedAt, status: 'accepted', timedOut: false })
+      schedulePoll(0)
+    } else setScreen({ kind: 'idle' })
+  } else if (screen.kind === 'waiting') schedulePoll(0)
   else render()
 }
 
@@ -78,7 +104,7 @@ function bodyLines(): string[] {
     case 'unconfigured':
       return centeredMessage('スマホ側の画面で\n接続先と端末トークンを設定してください')
     case 'idle':
-      return centeredMessage(`タップで送信:\n「${getSettings().fixedText}」`)
+      return idlePreview(getSettings().fixedText)
     case 'sending':
       return centeredMessage('送信しています…')
     case 'waiting':
@@ -117,7 +143,7 @@ async function renderLoop(): Promise<void> {
       } catch (err) {
         console.error('rebuildPageContainer failed', err)
       }
-    } while (renderDirty)
+    } while (renderDirty && !disposed)
   } finally {
     renderInFlight = false
   }
@@ -125,77 +151,99 @@ async function renderLoop(): Promise<void> {
 
 // ---------- request flow ----------
 
-export async function sendFixedQuestion(): Promise<void> {
-  if (screen.kind !== 'idle' || !isConfigured()) return
-  const { conversationId, fixedText } = getSettings()
-  // Reuse the pending client id if a previous attempt never got a request_id (idempotent on the relay).
-  const pending = getPending()
-  const clientRequestId = pending && !pending.requestId ? pending.clientRequestId : crypto.randomUUID()
-  const startedAt = Date.now()
-  await setPending({ clientRequestId, requestId: null, startedAt })
-  setScreen({ kind: 'sending' })
+export async function sendQuestion(): Promise<void> {
+  if (busy || disposed || screen.kind !== 'idle' || !isConfigured()) return
+  busy = true
+  const gen = ++generation
   try {
-    const req = await createRequest({ conversationId, clientRequestId, text: fixedText })
-    await setPending({ clientRequestId, requestId: req.request_id, startedAt })
-    await applyRequest(req, startedAt)
-  } catch (e) {
-    await handleRelayError(e, null)
+    const { conversationId, fixedText } = getSettings()
+    // A pending entry without request_id means an earlier create never answered: reuse ITS key and text
+    // so the relay's idempotency returns the same request instead of creating a second one.
+    const prior = getPending()
+    const pending: PendingRequest =
+      prior && !prior.requestId && prior.text
+        ? prior
+        : { clientRequestId: crypto.randomUUID(), requestId: null, conversationId, text: fixedText, startedAt: Date.now() }
+    await setPending(pending)
+    if (stale(gen)) return
+    setScreen({ kind: 'sending' })
+    let req: RelayRequest
+    try {
+      req = await createRequest({ conversationId: pending.conversationId, clientRequestId: pending.clientRequestId, text: pending.text })
+    } catch (e) {
+      if (stale(gen)) return
+      await handleRelayError(e, null)
+      return
+    }
+    if (stale(gen)) return
+    await setPending({ ...pending, requestId: req.request_id })
+    if (stale(gen)) return
+    await applyRequest(req, pending.startedAt, gen)
+  } finally {
+    busy = false
   }
 }
 
-async function applyRequest(req: RelayRequest, startedAt: number): Promise<void> {
+function stale(gen: number): boolean {
+  return disposed || gen !== generation
+}
+
+async function applyRequest(req: RelayRequest, startedAt: number, gen: number): Promise<void> {
+  if (stale(gen)) return
   const done = screenForRequest(req, pagesOf)
   if (done) {
-    await setPending(null)
+    // Keep the pending entry so reopening restores the answer; it is cleared when the user moves on.
     setScreen(done)
     return
   }
   const elapsed = Date.now() - startedAt
-  const timedOut = screen.kind === 'waiting' ? screen.timedOut || elapsed >= WAIT_LIMIT_MS : elapsed >= WAIT_LIMIT_MS
+  const timedOut = (screen.kind === 'waiting' && screen.timedOut) || elapsed >= WAIT_LIMIT_MS
   setScreen({ kind: 'waiting', requestId: req.request_id, startedAt, status: req.status, timedOut })
   if (!timedOut) schedulePoll(pollInterval(elapsed))
 }
 
 function schedulePoll(delayMs: number): void {
+  if (disposed) return
   if (pollTimer) clearTimeout(pollTimer)
-  const token = ++pollToken
-  pollTimer = setTimeout(() => void poll(token), delayMs)
+  const gen = generation
+  pollTimer = setTimeout(() => void poll(gen), delayMs)
 }
 
 function cancelPoll(): void {
   if (pollTimer) clearTimeout(pollTimer)
   pollTimer = null
-  pollToken++
 }
 
-async function poll(token: number): Promise<void> {
-  if (token !== pollToken || screen.kind !== 'waiting') return
+async function poll(gen: number): Promise<void> {
+  if (stale(gen) || screen.kind !== 'waiting') return
   const { requestId, startedAt } = screen
   try {
     const req = await getRequest(requestId)
-    if (token !== pollToken || screen.kind !== 'waiting') return
-    await applyRequest(req, startedAt)
+    await applyRequest(req, startedAt, gen)
   } catch (e) {
-    if (token !== pollToken) return
+    if (stale(gen) || screen.kind !== 'waiting') return
     if (e instanceof RelayError && e.code === 'network') {
-      // Transient: keep waiting, show elapsed time, retry on the slow interval.
-      setScreen({ ...screen, status: screen.status })
-      schedulePoll(pollInterval(Date.now() - startedAt))
+      // Transient: keep waiting, but the 120s limit still applies (spec 5.3).
+      const elapsed = Date.now() - startedAt
+      const timedOut = screen.timedOut || elapsed >= WAIT_LIMIT_MS
+      setScreen({ ...screen, timedOut })
+      if (!timedOut) schedulePoll(pollInterval(elapsed))
       return
     }
     await handleRelayError(e, requestId)
   }
 }
 
+/** Errors keep the pending entry (except not_found): the relay may still finish it, and 409 would block otherwise. */
 async function handleRelayError(e: unknown, requestId: string | null): Promise<void> {
   cancelPoll()
   if (e instanceof RelayError) {
     switch (e.code) {
       case 'unauthorized':
-        await setPending(null)
-        setScreen({ kind: 'error', message: '認証に失敗しました\nスマホ側で端末トークンを確認してください', requestId, retryable: false })
+        setScreen({ kind: 'error', message: '認証に失敗しました\nスマホ側で端末トークンを確認してください', requestId, retryable: true })
         return
       case 'in_flight':
+        // The relay still has an unfinished request we do not know about (e.g. storage was lost). Nothing to resume.
         await setPending(null)
         setScreen({ kind: 'error', message: '前の依頼がまだ処理中です\nしばらく待ってから再試行してください', requestId, retryable: true })
         return
@@ -216,16 +264,35 @@ async function handleRelayError(e: unknown, requestId: string | null): Promise<v
 }
 
 async function abandonCurrent(): Promise<void> {
-  if (screen.kind !== 'waiting') return
+  if (busy || disposed || screen.kind !== 'waiting') return
+  busy = true
   const { requestId } = screen
+  const gen = ++generation
   cancelPoll()
   try {
-    await abandonRequest(requestId)
-  } catch (e) {
-    console.error('abandon failed', e)
+    try {
+      await abandonRequest(requestId)
+    } catch (e) {
+      // Could not tell the relay. Keep the pending entry so the request can still be resumed/re-fetched.
+      console.error('abandon failed', e)
+      if (stale(gen)) return
+      setScreen({ kind: 'error', message: '中断を送れませんでした\n通信を確認して再試行してください', requestId, retryable: true })
+      return
+    }
+    if (stale(gen)) return
+    await setPending(null)
+    setScreen({ kind: 'idle' })
+  } finally {
+    busy = false
   }
-  await setPending(null)
-  setScreen({ kind: 'idle', lastAnswer: null })
+}
+
+/** Resume polling a known request (from error screens and reopen). */
+function resume(requestId: string): void {
+  const startedAt = getPending()?.startedAt ?? Date.now()
+  generation++
+  setScreen({ kind: 'waiting', requestId, startedAt, status: 'accepted', timedOut: false })
+  schedulePoll(0)
 }
 
 // ---------- input ----------
@@ -241,6 +308,7 @@ function toInput(eventType: OsEventTypeList): Input | null {
 }
 
 export function handleInput(eventType: OsEventTypeList): void {
+  if (disposed) return
   const input = toInput(eventType)
   if (!input) return
   switch (screen.kind) {
@@ -248,35 +316,38 @@ export function handleInput(eventType: OsEventTypeList): void {
       if (input === 'double') void bridge?.shutDownPageContainer(1)
       break
     case 'idle':
-      if (input === 'click') void sendFixedQuestion()
+      if (input === 'click') void sendQuestion()
       else if (input === 'double') void bridge?.shutDownPageContainer(1)
       break
     case 'sending':
       break
     case 'waiting':
       if (input === 'double') void abandonCurrent()
-      else if (input === 'click' && screen.timedOut) {
-        // "状況を再確認": one more fetch, stays timed out until a result arrives.
-        schedulePoll(0)
-      }
+      else if (input === 'click' && screen.timedOut) schedulePoll(0) // 状況を再確認
       break
     case 'answer':
-      if (input === 'click') setScreen({ kind: 'idle', lastAnswer: null })
-      else if (input === 'double') void bridge?.shutDownPageContainer(1)
+      if (input === 'click') {
+        // New question: this is the point where the answered request is forgotten.
+        generation++
+        void setPending(null)
+        setScreen({ kind: 'idle' })
+      } else if (input === 'double') void bridge?.shutDownPageContainer(1)
       else setScreen(turnPage(screen, input))
       break
     case 'error':
       if (input === 'double') {
-        void setPending(null)
-        setScreen(isConfigured() ? { kind: 'idle', lastAnswer: null } : { kind: 'unconfigured' })
+        // Back: resume a known request rather than dropping it.
+        if (screen.requestId && getPending()?.requestId === screen.requestId) resume(screen.requestId)
+        else {
+          generation++
+          setScreen(isConfigured() ? { kind: 'idle' } : { kind: 'unconfigured' })
+        }
       } else if (input === 'click' && screen.retryable) {
-        if (screen.requestId) {
-          const startedAt = getPending()?.startedAt ?? Date.now()
-          setScreen({ kind: 'waiting', requestId: screen.requestId, startedAt, status: 'accepted', timedOut: false })
-          schedulePoll(0)
-        } else {
-          setScreen({ kind: 'idle', lastAnswer: null })
-          void sendFixedQuestion()
+        if (screen.requestId) resume(screen.requestId)
+        else {
+          generation++
+          setScreen({ kind: 'idle' })
+          void sendQuestion()
         }
       }
       break
@@ -284,5 +355,20 @@ export function handleInput(eventType: OsEventTypeList): void {
 }
 
 export function dispose(): void {
+  disposed = true
+  generation++
   cancelPoll()
+}
+
+/** Test hook: reset module state between tests. */
+export function __resetForTests(): void {
+  cancelPoll()
+  bridge = null
+  screen = { kind: 'idle' }
+  generation = 0
+  busy = false
+  disposed = false
+  listeners.clear()
+  renderInFlight = false
+  renderDirty = false
 }

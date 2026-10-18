@@ -11,11 +11,22 @@ export interface Settings {
   conversationId: string
 }
 
-/** The request the glasses are currently waiting on; survives app reopen so it can be re-fetched. */
+/**
+ * The request the glasses are working on. Survives app reopen so it can be re-fetched instead of re-sent.
+ * It is kept until the user explicitly starts a new question or abandons, so an answer can also be restored.
+ */
 export interface PendingRequest {
   clientRequestId: string
   requestId: string | null
+  /** Exactly what was (or will be) sent, so an idempotent retry never pairs a new text with an old key. */
+  conversationId: string
+  text: string
   startedAt: number
+}
+
+interface Stamped<T> {
+  savedAt: number
+  value: T
 }
 
 export const DEFAULT_BASE_URL = 'https://grokeven-production.na2kera.workers.dev'
@@ -41,55 +52,71 @@ function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
   ])
 }
 
-async function readKey(key: string): Promise<string | null> {
-  if (bridge) {
-    try {
-      const raw = await withTimeout(bridge.getLocalStorage(key), '')
-      if (raw) return raw
-    } catch {
-      // host storage unavailable — fall back to WebView storage
-    }
-  }
+function parseStamped<T>(raw: string | null | undefined, validate: (v: unknown) => T | null): Stamped<T> | null {
+  if (!raw) return null
   try {
-    return localStorage.getItem(key)
+    const p = JSON.parse(raw)
+    if (typeof p?.savedAt !== 'number') return null
+    const value = validate(p.value)
+    return value === null ? null : { savedAt: p.savedAt, value }
   } catch {
     return null
   }
 }
 
-async function writeKey(key: string, value: string): Promise<void> {
+/**
+ * Host storage (bridge) survives WebView recreation; WebView localStorage is the fallback.
+ * Both are written, and the NEWER copy wins on read, so a failed host write cannot resurrect stale data.
+ */
+async function readNewest<T>(key: string, validate: (v: unknown) => T | null): Promise<T | null> {
+  let fromHost: Stamped<T> | null = null
+  if (bridge) {
+    try {
+      fromHost = parseStamped(await withTimeout(bridge.getLocalStorage(key), ''), validate)
+    } catch {
+      // host storage unavailable
+    }
+  }
+  let fromWeb: Stamped<T> | null = null
   try {
-    localStorage.setItem(key, value)
+    fromWeb = parseStamped(localStorage.getItem(key), validate)
+  } catch {
+    // WebView storage unavailable
+  }
+  if (fromHost && fromWeb) return fromHost.savedAt >= fromWeb.savedAt ? fromHost.value : fromWeb.value
+  return (fromHost ?? fromWeb)?.value ?? null
+}
+
+async function writeBoth<T>(key: string, value: T | null): Promise<void> {
+  const raw = value === null ? '' : JSON.stringify({ savedAt: Date.now(), value } satisfies Stamped<T>)
+  try {
+    if (raw) localStorage.setItem(key, raw)
+    else localStorage.removeItem(key)
   } catch {
     // ignore
   }
   if (bridge) {
     try {
-      await withTimeout(bridge.setLocalStorage(key, value), false)
+      await withTimeout(bridge.setLocalStorage(key, raw), false)
     } catch {
-      // ignore
+      // ignore: the WebView copy is newer and will win on the next read
     }
   }
 }
 
-function parseSettings(raw: string | null): Partial<Settings> | null {
-  if (!raw) return null
-  try {
-    const p = JSON.parse(raw)
-    return typeof p === 'object' && p ? p : null
-  } catch {
-    return null
-  }
+function validateSettings(v: unknown): Partial<Settings> | null {
+  return typeof v === 'object' && v ? (v as Partial<Settings>) : null
 }
 
-function parsePending(raw: string | null): PendingRequest | null {
-  if (!raw) return null
-  try {
-    const p = JSON.parse(raw)
-    if (typeof p?.clientRequestId !== 'string' || typeof p?.startedAt !== 'number') return null
-    return { clientRequestId: p.clientRequestId, requestId: typeof p.requestId === 'string' ? p.requestId : null, startedAt: p.startedAt }
-  } catch {
-    return null
+function validatePending(v: unknown): PendingRequest | null {
+  const p = v as Partial<PendingRequest> | null
+  if (typeof p?.clientRequestId !== 'string' || typeof p?.startedAt !== 'number') return null
+  return {
+    clientRequestId: p.clientRequestId,
+    requestId: typeof p.requestId === 'string' ? p.requestId : null,
+    conversationId: typeof p.conversationId === 'string' ? p.conversationId : '',
+    text: typeof p.text === 'string' ? p.text : '',
+    startedAt: p.startedAt,
   }
 }
 
@@ -97,14 +124,18 @@ function parsePending(raw: string | null): PendingRequest | null {
  * Dev convenience for the simulator, where the phone UI cannot be typed into by scripts:
  * open the app as http://localhost:5173/#settings=<urlencoded JSON> to seed settings once.
  * The hash is cleared immediately and nothing is bundled; Even Hub never loads the app with a hash.
+ * A seed that changes baseUrl without providing a token also drops the stored token, so a crafted
+ * link cannot redirect an existing token to another host.
  */
 function takeSettingsFromHash(): Partial<Settings> | null {
-  if (!import.meta.env.DEV) return null
+  if (!import.meta.env.DEV || typeof location === 'undefined') return null
   const m = /[#&]settings=([^&]+)/.exec(location.hash)
   if (!m) return null
   history.replaceState(null, '', location.pathname + location.search)
   try {
-    return parseSettings(decodeURIComponent(m[1]))
+    const seed = validateSettings(JSON.parse(decodeURIComponent(m[1])))
+    if (seed && typeof seed.baseUrl === 'string' && typeof seed.deviceToken !== 'string') seed.deviceToken = ''
+    return seed
   } catch {
     return null
   }
@@ -112,17 +143,17 @@ function takeSettingsFromHash(): Partial<Settings> | null {
 
 export async function initSettingsStore(evenBridge: EvenAppBridge | null): Promise<void> {
   bridge = evenBridge
+  const stored = await readNewest(KEY_SETTINGS, validateSettings)
   const seeded = takeSettingsFromHash()
-  if (seeded) await writeKey(KEY_SETTINGS, JSON.stringify({ ...parseSettings(await readKey(KEY_SETTINGS)), ...seeded }))
-  const s = parseSettings(await readKey(KEY_SETTINGS))
+  const s = { ...stored, ...seeded }
   settings = {
-    baseUrl: (typeof s?.baseUrl === 'string' && s.baseUrl.trim()) || DEFAULT_BASE_URL,
-    deviceToken: typeof s?.deviceToken === 'string' ? s.deviceToken : '',
-    fixedText: (typeof s?.fixedText === 'string' && s.fixedText.trim()) || DEFAULT_FIXED_TEXT,
-    conversationId: (typeof s?.conversationId === 'string' && s.conversationId) || crypto.randomUUID(),
+    baseUrl: ((typeof s.baseUrl === 'string' && s.baseUrl.trim()) || DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    deviceToken: typeof s.deviceToken === 'string' ? s.deviceToken : '',
+    fixedText: (typeof s.fixedText === 'string' && s.fixedText.trim()) || DEFAULT_FIXED_TEXT,
+    conversationId: (typeof s.conversationId === 'string' && s.conversationId) || crypto.randomUUID(),
   }
-  if (!s?.conversationId) await writeKey(KEY_SETTINGS, JSON.stringify(settings))
-  pending = parsePending(await readKey(KEY_PENDING))
+  if (seeded || !stored?.conversationId) await writeBoth(KEY_SETTINGS, settings)
+  pending = await readNewest(KEY_PENDING, validatePending)
 }
 
 export function getSettings(): Settings {
@@ -132,7 +163,7 @@ export function getSettings(): Settings {
 export async function saveSettings(next: Partial<Settings>): Promise<void> {
   settings = { ...settings, ...next }
   settings.baseUrl = settings.baseUrl.replace(/\/+$/, '')
-  await writeKey(KEY_SETTINGS, JSON.stringify(settings))
+  await writeBoth(KEY_SETTINGS, settings)
 }
 
 export function isConfigured(): boolean {
@@ -145,5 +176,5 @@ export function getPending(): PendingRequest | null {
 
 export async function setPending(next: PendingRequest | null): Promise<void> {
   pending = next
-  await writeKey(KEY_PENDING, next ? JSON.stringify(next) : '')
+  await writeBoth(KEY_PENDING, next)
 }
