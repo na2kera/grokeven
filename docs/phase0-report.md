@@ -5,6 +5,8 @@
 
 ## 確定した接続経路
 
+注: G2 アプリと 2 秒ポーリングの部分は Phase 2 の対象であり未検証。Phase 0 で検証したのは Workers 以降の経路（PC の curl から Workers を呼んだ）。
+
 ```
 G2 アプリ ──(Bearer DEVICE_TOKEN)──▶ Workers POST /v1/requests ──▶ D1 保存
                                         │
@@ -35,6 +37,12 @@ G2 アプリ ◀──(2 秒ポーリング)── Workers GET /v1/requests/{id}
 | Bot の承認プロンプト | 発生なし（外向き HTTPS も承認なしで実行） |
 | 安全チェックによる停止 | 発生なし（今後、内容により発生しうる） |
 
+## 検証環境
+
+- Grok Bot: Cursor Pro プラン付帯のもの。Mac アプリと iPhone アプリを使用（ルーチン作成・編集は Mac アプリ）
+- マスター Bot: オギコ（既存。設定・記憶は変更せず、ルーチン「G2テスト」のみ追加）
+- 確認した公式資料: docs.x.ai の grok-bot 各ページ（overview, skills-routines-and-automations, tag-on-x, get-started, bots, files-and-results, settings-and-notifications, troubleshooting, mobile）、grok/automations/webhooks、cursor.com/help/grok-bot/plans、hub.evenrealities.com の packaging / app-submission / device-apis / networking。詳細は docs/phase0-research.md
+
 ## 利用者が行った設定
 
 1. Grok Bot（Mac アプリ）でオギコにチャットで依頼し、Webhook 起動のルーチン「G2テスト」を作成
@@ -46,12 +54,13 @@ G2 アプリ ◀──(2 秒ポーリング)── Workers GET /v1/requests/{id}
 - **公式資料に記載のない機能に依存している。** Bot ルーチンの Webhook 起動は docs.x.ai に記載がなく、Cursor 基盤（api2.cursor.sh）のエンドポイント。仕様変更の可能性がある
 - **Cloudflare の Bot 対策**: Bot が Python 標準 User-Agent で送ると 1010 で拒否される。独自 User-Agent で回避
 - **承認・安全チェック**: Bot の外向き送信には毎回自動安全チェックがかかる。停止した場合 Bot はチャットに報告するが、Workers には通知が来ないため `awaiting_approval` を観測できない。利用者が公式アプリで確認する運用
-- **会話継続**: アプリ側 conversation_id と Grok 側会話は対応しない。文脈は Bot の記憶に依存し、全文引き継ぎは保証されない
+- **会話継続**: アプリ側 conversation_id と Grok 側会話は対応しない。文脈は Bot の記憶に依存し、全文引き継ぎは保証されない。記憶の保持期間、再現性、会話間の分離は未検証（1 回の合言葉テストのみ）
 - **キャンセル不可**: 依頼の打ち切り（abandon）は中継側の枠解放のみ。Bot の処理は止まらない
 - **ルーチンの指示が接続仕様の一部**: 指示文を変えると動作が変わる。指示文は本リポジトリに控えを置く（docs/routine-instruction.md）
 
 ## 残課題（Phase 1 以降）
 
-- 120 秒超の長時間処理、安全チェック停止時の挙動は未観測
+- 120 秒超の長時間処理、結果トークン TTL（現在 1800 秒）直前・直後の回答、安全チェック停止時の挙動は未観測
+- abandon 後に届く遅延回答・再送が次の依頼を壊さないことは単体テストのみ
 - 重複コールバック（Bot の再送）は単体テストでのみ確認
 - Even Hub WebView のオリジン（ALLOWED_ORIGINS）は未設定
