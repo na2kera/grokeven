@@ -178,3 +178,13 @@ Phase 0 は、Grok Bot アプリの設定画面（Connect apps / ルーチンの
 - g2test-006「さっきの合言葉は？」→ 11 秒で「紫のカワウソ」
 - 別々の Webhook 起動（別ルーチン実行）でも、同じ Bot の会話で前の内容を参照できた。合格ライン「Bot の記憶で文脈が通る」を満たす
 - Bot 側の報告: 1 回目の POST で HTTP 200、再送なし
+
+## Phase 1 最小確認（2026-10-19、本番）
+
+| 検証 | 結果 |
+| --- | --- |
+| 120 秒超の回答（p1-long-001「180 秒待ってから答えて」） | 合格。200 秒で completed、answer=ok-late。トークン TTL 1800 秒内。Bot 側も 1 回目の POST で 200 |
+| 打ち切り後の遅延回答と新規依頼（p1-abandon-001 / p1-after-abandon-001） | 合格。abandon で failed になり枠が解放、直後の新規依頼は 12 秒で completed。打ち切った依頼にも後から answer=ok-abandon が保存された |
+| 重複コールバック（p1-dup-001、Bot に同じ POST を 2 回させた） | Workers 側は completed / answer=ok-dup。2 回目の応答は Bot の報告で確認（期待: 200 + duplicate:true） |
+
+補助スクリプト: `scripts/ask.sh <client_request_id> "<text>" [max_seconds]`（本番に依頼を作りポーリング）
