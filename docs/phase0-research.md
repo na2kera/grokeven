@@ -202,3 +202,10 @@ Even Hub シミュレーター（v0.9.5、automation API）で `apps/glasses` �
 | CORS | 本番 `ALLOWED_ORIGINS="*"` を設定するまで `Load failed`。設定後は OK。実機の Origin は `/v1/whoami` で確認予定 |
 
 注意: Volta の Node 22 固定はワークスペース配下で効かないため、各 `package.json` に `"volta": {"extends": "../../package.json"}` を追加。
+
+### Phase 2 進捗（2026-10-19 時点）
+
+- G2 アプリ（apps/glasses）: 固定文送信・状態表示・回答ページ送り・開き直し再取得・中断を実装。Codex レビュー 2 回分（競合・永続化・UX の計 15 件）を反映。単体 + 統合テスト 21 件
+- シミュレーターで再検証: 待機 → タップ → 送信済み → 回答（ok-v4）。待機中の追加タップは無視される
+- 実機未検証。`apps/glasses/grokeven.ehpk`（git 管理外）を Even アプリに入れて確認する手順は docs/local-dev.md
+- 未決: app.json の `name`（現在 "Bot Relay"）、実機 Origin 確定後の `ALLOWED_ORIGINS` 絞り込み
