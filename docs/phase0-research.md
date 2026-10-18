@@ -67,3 +67,15 @@ Phase 0 は、Grok Bot アプリの設定画面（Connect apps / ルーチンの
 
 要検証: (a) イベントルーチンがユーザーのアカウントで作成できるか、(b) ルーチン内の Bot が承認なしで Slack 投稿できるか、(c) 回答と request_id の対応付け（スレッド ts を利用する想定）
 代替: GitHub 通知（Issue 作成）トリガー + Issue コメントで回答 + GitHub Webhook
+
+## 決定（同日）: GitHub トリガーを採用
+
+ユーザー判断により、Phase 0 の検証経路は GitHub 通知トリガーを採用する（Slack ワークスペース不要のため）。
+
+想定フロー:
+1. G2 → Workers → 専用プライベートリポジトリに Issue を作成（Workers が持つ GitHub token。本文に request_id を含める）
+2. マスター Bot のイベントルーチンが Issue 作成で起動し、Bot の会話内で処理
+3. Bot が同 Issue にコメントで回答を投稿
+4. GitHub Webhook（issue_comment）→ Workers → D1 → G2 ポーリング
+
+要検証は Slack 案と同じ: (a) GitHub イベントルーチンが作成できるか、(b) ルーチン内の Bot が承認なしで Issue コメントできるか、(c) Issue 番号 ↔ request_id の対応付け
